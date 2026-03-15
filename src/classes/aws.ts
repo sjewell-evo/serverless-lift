@@ -22,7 +22,7 @@ export async function emptyBucket(aws: AwsProvider, bucketName: string): Promise
     const data = await aws.request<ListObjectsV2Request, ListObjectsV2Output>("S3", "listObjectsV2", {
         Bucket: bucketName,
     });
-    if (data.Contents === undefined || data.Contents === []) {
+    if (data.Contents === undefined || data.Contents.length === 0) {
         return;
     }
     const keys = data.Contents.map((item) => item.Key).filter((key): key is string => key !== undefined);
