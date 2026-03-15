@@ -1,8 +1,8 @@
 import type {
     DeleteObjectsOutput,
     DeleteObjectsRequest,
-    ListObjectsV2Output,
-    ListObjectsV2Request,
+    ListObjectVersionsOutput,
+    ListObjectVersionsRequest,
 } from "aws-sdk/clients/s3";
 import type { CreateInvalidationRequest, CreateInvalidationResult } from "aws-sdk/clients/cloudfront";
 import type { AwsProvider } from "@lift/providers";
@@ -19,19 +19,26 @@ export async function awsRequest<Input, Output>(
 }
 
 export async function emptyBucket(aws: AwsProvider, bucketName: string): Promise<void> {
-    const data = await aws.request<ListObjectsV2Request, ListObjectsV2Output>("S3", "listObjectsV2", {
-        Bucket: bucketName,
-    });
-    if (data.Contents === undefined || data.Contents.length === 0) {
-        return;
-    }
-    const keys = data.Contents.map((item) => item.Key).filter((key): key is string => key !== undefined);
-    await aws.request<DeleteObjectsRequest, DeleteObjectsOutput>("S3", "deleteObjects", {
-        Bucket: bucketName,
-        Delete: {
-            Objects: keys.map((key) => ({ Key: key })),
-        },
-    });
+    let keyMarker: string | undefined;
+    let versionIdMarker: string | undefined;
+    do {
+        const data = await aws.request<ListObjectVersionsRequest, ListObjectVersionsOutput>(
+            "S3",
+            "listObjectVersions",
+            { Bucket: bucketName, KeyMarker: keyMarker, VersionIdMarker: versionIdMarker }
+        );
+        const objects = [...(data.Versions ?? []), ...(data.DeleteMarkers ?? [])]
+            .map(({ Key, VersionId }) => ({ Key, VersionId }))
+            .filter((o): o is { Key: string; VersionId: string } => o.Key !== undefined && o.VersionId !== undefined);
+        if (objects.length > 0) {
+            await aws.request<DeleteObjectsRequest, DeleteObjectsOutput>("S3", "deleteObjects", {
+                Bucket: bucketName,
+                Delete: { Objects: objects },
+            });
+        }
+        keyMarker = data.IsTruncated === true ? data.NextKeyMarker : undefined;
+        versionIdMarker = data.IsTruncated === true ? data.NextVersionIdMarker : undefined;
+    } while (keyMarker !== undefined);
 }
 
 export async function invalidateCloudFrontCache(aws: AwsProvider, distributionId: string): Promise<void> {
